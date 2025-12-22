@@ -13,7 +13,10 @@ export async function getDb(): Promise<Db> {
   if (db) return db;
 
   if (!client) {
-    client = new MongoClient(uri);
+    client = new MongoClient(uri, {
+      tls: true,
+      serverSelectionTimeoutMS: 5000, // Fail fast if IP is not whitelisted
+    });
   }
 
   await client.connect();
