@@ -8,6 +8,8 @@ import {
   IconButton,
   TextField,
   Typography,
+  Snackbar,
+  Alert,
 } from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
 import PauseIcon from "@mui/icons-material/Pause";
@@ -15,19 +17,17 @@ import type { Message } from "@/types";
 
 interface ChatPanelProps {
   chatId?: string | null;
+  onChatCreated?: (chatId: string) => void;
 }
 
-export function ChatPanel({ chatId }: ChatPanelProps) {
-  const [currentChatId, setCurrentChatId] = useState<string | null>(chatId ?? null);
+export function ChatPanel({ chatId, onChatCreated }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const queryClient = useQueryClient();
 
-  const effectiveChatId = useMemo(
-    () => chatId ?? currentChatId,
-    [chatId, currentChatId]
-  );
+  const effectiveChatId = chatId;
 
   const {
     data: messages,
@@ -45,11 +45,10 @@ export function ChatPanel({ chatId }: ChatPanelProps) {
   });
 
   useEffect(() => {
-    if (chatId && chatId !== currentChatId) {
-      setCurrentChatId(chatId);
+    if (effectiveChatId) {
       refetch();
     }
-  }, [chatId, currentChatId, refetch]);
+  }, [effectiveChatId, refetch]);
 
   const canSend = input.trim().length > 0 && !isSending;
 
@@ -80,7 +79,11 @@ export function ChatPanel({ chatId }: ChatPanelProps) {
 
       const data = (await res.json()) as { reply: string; chatId: string };
       setInput("");
-      setCurrentChatId(data.chatId);
+
+      // If this was a new chat (no chatId previously), notify parent
+      if (!effectiveChatId && onChatCreated) {
+        onChatCreated(data.chatId);
+      }
 
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["chats"] }),
@@ -91,9 +94,7 @@ export function ChatPanel({ chatId }: ChatPanelProps) {
         // Swallow abort error
       } else {
         console.error("Error sending message:", error);
-        alert(
-          "Something went wrong while sending your message. Please try again."
-        );
+        setErrorToast((error as Error).message);
       }
     } finally {
       setIsSending(false);
@@ -126,6 +127,8 @@ export function ChatPanel({ chatId }: ChatPanelProps) {
       flexDirection="column"
       borderRight={1}
       borderColor="divider"
+      height="100%"
+      overflow="hidden"
     >
       <Box component="header" p={2} borderBottom={1} borderColor="divider">
         <Typography variant="subtitle1">Support chat</Typography>
@@ -205,6 +208,22 @@ export function ChatPanel({ chatId }: ChatPanelProps) {
           {isSending ? <PauseIcon /> : <SendIcon />}
         </IconButton>
       </Box>
+
+      <Snackbar
+        open={!!errorToast}
+        autoHideDuration={6000}
+        onClose={() => setErrorToast(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setErrorToast(null)}
+          severity="error"
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
+          {errorToast}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

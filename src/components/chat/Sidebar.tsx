@@ -20,11 +20,13 @@ interface ChatWithPreview extends Chat {
 }
 
 interface SidebarProps {
+  selectedChatId: string | null;
   onSelectChat?: (chatId: string | null) => void;
+  onChatCreated?: (chatId: string) => void;
 }
 
-export function Sidebar({ onSelectChat }: SidebarProps) {
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+export function Sidebar({ selectedChatId: selectedChatIdProp, onSelectChat, onChatCreated }: SidebarProps) {
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(selectedChatIdProp);
 
   const { data: chats, refetch } = useQuery<ChatWithPreview[]>({
     queryKey: ["chats"],
@@ -37,13 +39,18 @@ export function Sidebar({ onSelectChat }: SidebarProps) {
     },
   });
 
+  // Sync internal selection with external selection (e.g. when a new chat is created)
   useEffect(() => {
-    onSelectChat?.(selectedChatId);
-  }, [onSelectChat, selectedChatId]);
+    setSelectedChatId(selectedChatIdProp);
+  }, [selectedChatIdProp]);
+
+  const handleSelectChat = (chatId: string | null) => {
+    setSelectedChatId(chatId);
+    onSelectChat?.(chatId);
+  };
 
   const handleNewChat = () => {
-    setSelectedChatId(null);
-    onSelectChat?.(null);
+    handleSelectChat(null);
     refetch();
   };
 
@@ -55,6 +62,8 @@ export function Sidebar({ onSelectChat }: SidebarProps) {
       borderRight={1}
       borderColor="divider"
       p={2}
+      height="100%"
+      overflow="hidden"
     >
       <Typography variant="h6" gutterBottom>
         Conversations
@@ -79,7 +88,7 @@ export function Sidebar({ onSelectChat }: SidebarProps) {
           <ListItem key={chat.chatId} disablePadding>
             <ListItemButton
               selected={chat.chatId === selectedChatId}
-              onClick={() => setSelectedChatId(chat.chatId)}
+              onClick={() => handleSelectChat(chat.chatId)}
             >
               <ListItemText
                 primary={chat.title || "Untitled chat"}

@@ -1,14 +1,6 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import OpenAI from "openai";
 import type { Message, DocumentRecord } from "@/types";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-if (!process.env.OPENAI_API_KEY) {
-  // Fail fast on misconfiguration in development
-  console.warn("OPENAI_API_KEY is not set. LLM calls will fail.");
-}
 
 export interface GenerateReplyParams {
   history: Message[];
@@ -21,60 +13,94 @@ export async function generateReply({
   userMessage,
   documents,
 }: GenerateReplyParams): Promise<string> {
-  const systemPrompt = [
-    "You are a helpful support agent for a small e-commerce store.",
-    "Answer clearly and concisely.",
-    "Use the store policies and FAQs provided below when relevant.",
-  ].join(" ");
+  // Common Pre-filtering logic
+  const lowerMsg = userMessage.toLowerCase();
+  const storeKeywords = ["shipping", "return", "refund", "contact", "hour", "email", "support", "payment"];
+  const isStoreQuery = storeKeywords.some(k => lowerMsg.includes(k));
 
-  const docsText =
-    documents.length > 0
-      ? documents
-        .map(
-          (doc) =>
-            `Document: ${doc.name} (type: ${doc.type})\n${doc.content.slice(
-              0,
-              4000
-            )}`
-        )
-        .join("\n\n")
-      : "No additional store documents are available.";
-
-  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    {
-      role: "system",
-      content: `${systemPrompt}\n\nStore documents:\n${docsText}`,
-    },
-    ...history
-      .slice(-15)
-      .map<OpenAI.Chat.ChatCompletionMessageParam>((m) => ({
-        role: m.sender === "user" ? "user" : "assistant",
-        content: m.text,
-      })),
-    {
-      role: "user",
-      content: userMessage,
-    },
-  ];
-
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages,
-      max_tokens: 400,
-      temperature: 0.4,
+  let filteredDocs = documents;
+  if (isStoreQuery) {
+    filteredDocs = documents.sort((a, b) => {
+      const aIsPolicy = a.type === "policy" || a.type === "faq";
+      const bIsPolicy = b.type === "policy" || b.type === "faq";
+      if (aIsPolicy && !bIsPolicy) return -1;
+      if (!aIsPolicy && bIsPolicy) return 1;
+      return 0;
     });
-
-    const choice = completion.choices[0]?.message?.content;
-    if (!choice) {
-      throw new Error("No content returned from LLM");
-    }
-
-    return typeof choice === "string" ? choice : String(choice);
-  } catch (error) {
-    console.error("Error calling OpenAI:", error);
-    return "Sorry, I'm having trouble talking to the AI service right now. Please try again in a few seconds.";
   }
+
+  // System instructions shared between providers
+  const systemInstruction = `
+You are a helpful customer support agent for the Spur e-commerce store.
+Use the provided context to answer the user's question.
+
+STRICT RULES:
+1. ONLY use information from the provided context.
+2. If the answer is not in the context, say: "I'm sorry, I don't have information on that right now."
+3. Be professional, concise, and friendly.
+4. Do not mention document names or that you are an AI.
+5. Ignore unrelated personal documents (like a CV) when asked about store policies correctly.
+`.trim();
+
+  // --- PROVIDER ROUTING ---
+
+  // 1. Check for Google Gemini (PRIORITY)
+  if (process.env.GOOGLE_GENAI_API_KEY) {
+    try {
+      const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENAI_API_KEY);
+      const model = genAI.getGenerativeModel({
+        model: "gemini-2.5-flash",
+        generationConfig: { temperature: 0 }
+      });
+
+      const contextData = filteredDocs.slice(0, 10).map((doc) => `--- DOCUMENT: ${doc.name} ---\n${doc.content}`).join("\n\n");
+
+      const chat = model.startChat({
+        history: history.slice(-8).map((m) => ({
+          role: m.sender === "user" ? "user" : "model",
+          parts: [{ text: m.text }],
+        })),
+      });
+
+      const prompt = `INSTRUCTIONS: ${systemInstruction}\n\nCONTEXT:\n${contextData}\n\nUSER QUESTION: ${userMessage}`;
+      const result = await chat.sendMessage(prompt);
+      return (await result.response).text().trim();
+    } catch (err) {
+      console.error("Gemini Error:", err);
+      // If Gemini fails but Groq is available, it will fall through to Groq
+    }
+  }
+
+  // 2. Fallback to Groq (openai/gpt-oss-120b)
+  if (process.env.GROQ_API_KEY) {
+    try {
+      const groq = new OpenAI({
+        apiKey: process.env.GROQ_API_KEY,
+        baseURL: "https://api.groq.com/openai/v1",
+      });
+
+      const contextData = filteredDocs.slice(0, 8).map((doc) => `--- DOCUMENT: ${doc.name} ---\n${doc.content}`).join("\n\n");
+
+      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+        { role: "system", content: systemInstruction },
+        ...history.slice(-8).map<OpenAI.Chat.ChatCompletionMessageParam>((m) => ({
+          role: m.sender === "user" ? "user" : "assistant",
+          content: m.text,
+        })),
+        { role: "user", content: `CONTEXT:\n${contextData}\n\nUSER QUESTION: ${userMessage}` },
+      ];
+
+      const completion = await groq.chat.completions.create({
+        model: "openai/gpt-oss-120b",
+        messages,
+        temperature: 0,
+      });
+
+      return completion.choices[0]?.message?.content?.trim() || "No response.";
+    } catch (err) {
+      console.error("Groq Error:", err);
+    }
+  }
+
+  return "I'm sorry, I couldn't connect to my brain. Please ensure your API keys (Google or Groq) are set up correctly.";
 }
-
-

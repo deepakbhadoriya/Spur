@@ -7,6 +7,8 @@ import {
   Chip,
   IconButton,
   Typography,
+  Snackbar,
+  Alert,
 } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
@@ -15,19 +17,32 @@ import type { DocumentRecord } from "@/types";
 export function DocumentManager() {
   const queryClient = useQueryClient();
   const [isUploading, setIsUploading] = useState(false);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
 
-  const { data: documents } = useQuery<DocumentRecord[]>({
+  const { data: documents, refetch } = useQuery<DocumentRecord[]>({
     queryKey: ["documents"],
     queryFn: async () => {
       const res = await fetch("/api/chat/documents");
       if (!res.ok) throw new Error("Failed to load documents");
       return res.json();
     },
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
   });
 
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    // Client-side file size validation
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+    if (file.size > MAX_FILE_SIZE) {
+      setErrorToast(
+        `File size exceeds the maximum limit of 5MB. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB. Please choose a smaller file.`
+      );
+      event.target.value = "";
+      return;
+    }
 
     const formData = new FormData();
     formData.append("file", file);
@@ -43,12 +58,12 @@ export function DocumentManager() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Failed to upload document");
       }
+      // Invalidate and refetch to update the UI immediately
       await queryClient.invalidateQueries({ queryKey: ["documents"] });
+      await refetch();
     } catch (error) {
       console.error("Error uploading document:", error);
-      alert(
-        "Something went wrong while uploading your document. Please try again."
-      );
+      setErrorToast((error as Error).message);
     } finally {
       setIsUploading(false);
       event.target.value = "";
@@ -65,15 +80,17 @@ export function DocumentManager() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Failed to delete document");
       }
+      // Invalidate and refetch to update the UI immediately
       await queryClient.invalidateQueries({ queryKey: ["documents"] });
+      await refetch();
     } catch (error) {
       console.error("Error deleting document:", error);
-      alert("Failed to delete document. Please try again.");
+      setErrorToast((error as Error).message);
     }
   };
 
   return (
-    <Box component="aside" p={2}>
+    <Box component="aside" p={2} height="100%" display="flex" flexDirection="column" overflow="hidden">
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
         <Typography variant="h6">Store documents</Typography>
         <label>
@@ -93,9 +110,11 @@ export function DocumentManager() {
       <Typography variant="body2" color="text.secondary" mb={2}>
         These PDFs are used as knowledge for the AI agent (e.g. shipping
         policy, return policy, FAQs). Upload your own to customize answers.
+        <br />
+        <strong>Maximum file size: 5MB</strong>
       </Typography>
 
-      <Box display="flex" flexDirection="column" gap={1} maxHeight="70vh" overflow="auto">
+      <Box display="flex" flexDirection="column" gap={1} flex={1} overflow="auto">
         {documents?.map((doc) => (
           <Box
             key={doc._id ?? doc.name}
@@ -132,6 +151,22 @@ export function DocumentManager() {
           </Typography>
         )}
       </Box>
+
+      <Snackbar
+        open={!!errorToast}
+        autoHideDuration={6000}
+        onClose={() => setErrorToast(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+      >
+        <Alert
+          onClose={() => setErrorToast(null)}
+          severity="error"
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
+          {errorToast}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

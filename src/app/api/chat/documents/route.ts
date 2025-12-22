@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { PDFParse } from "pdf-parse";
 import { getDocumentsCollection } from "@/lib/db";
 import type { DocumentRecord } from "@/types";
+import path from "path";
+
+// We use the 'file://' scheme as required by the default ESM loader for local files
+const workerPath = path.resolve(process.cwd(), "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+PDFParse.setWorker(`file://${workerPath}`);
 
 export async function GET() {
   try {
@@ -41,18 +46,44 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // File size validation: 5MB limit
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: `File size exceeds the maximum limit of 5MB. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.` },
+        { status: 400 }
+      );
+    }
+
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // Use PDFParse class API to extract text from the uploaded PDF
+    console.log(`Attempting to parse PDF: ${file.name}, size: ${file.size} bytes`);
+
+    // Use PDFParse class to extract text from the uploaded PDF
+    let textResult;
     const parser = new PDFParse({ data: buffer });
-    const textResult = await parser.getText();
-    await parser.destroy();
+    try {
+      textResult = await parser.getText();
+      await parser.destroy();
+      console.log(`Successfully parsed PDF: ${file.name}`);
+    } catch (pdfError) {
+      console.error("PDF parsing error for file", file.name, ":", pdfError);
+      try {
+        await parser.destroy();
+      } catch (e) {
+        // ignore destroy error
+      }
+      return NextResponse.json(
+        { error: "Failed to parse PDF. The file may be corrupted or password-protected." },
+        { status: 400 }
+      );
+    }
 
     const content = textResult.text.trim();
     if (!content) {
       return NextResponse.json(
-        { error: "Uploaded PDF appears to be empty." },
+        { error: "Uploaded PDF appears to be empty or contains no extractable text." },
         { status: 400 }
       );
     }
@@ -76,7 +107,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("Error in POST /api/chat/documents:", error);
     return NextResponse.json(
-      { error: "Failed to upload and process document" },
+      { error: "Failed to upload and process document. Please try again." },
       { status: 500 }
     );
   }
