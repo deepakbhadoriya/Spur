@@ -13,14 +13,18 @@ import {
 } from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
 import PauseIcon from "@mui/icons-material/Pause";
+import MenuIcon from "@mui/icons-material/Menu";
+import DescriptionIcon from "@mui/icons-material/Description";
 import type { Message } from "@/types";
 
 interface ChatPanelProps {
   chatId?: string | null;
   onChatCreated?: (chatId: string) => void;
+  onToggleSidebar?: () => void;
+  onToggleDocManager?: () => void;
 }
 
-export function ChatPanel({ chatId, onChatCreated }: ChatPanelProps) {
+export function ChatPanel({ chatId, onChatCreated, onToggleSidebar, onToggleDocManager }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [errorToast, setErrorToast] = useState<string | null>(null);
@@ -130,11 +134,33 @@ export function ChatPanel({ chatId, onChatCreated }: ChatPanelProps) {
       height="100%"
       overflow="hidden"
     >
-      <Box component="header" p={2} borderBottom={1} borderColor="divider">
-        <Typography variant="subtitle1">Support chat</Typography>
-        <Typography variant="body2" color="text.secondary">
-          Ask about shipping, returns, or anything about our fictional store.
-        </Typography>
+      <Box
+        component="header"
+        p={2}
+        borderBottom={1}
+        borderColor="divider"
+        display="flex"
+        alignItems="center"
+        justifyContent="space-between"
+      >
+        <Box display="flex" alignItems="center" gap={1}>
+          {onToggleSidebar && (
+            <IconButton onClick={onToggleSidebar} size="small" sx={{ mr: 1 }}>
+              <MenuIcon />
+            </IconButton>
+          )}
+          <Box>
+            <Typography variant="subtitle1" lineHeight={1.2}>Support chat</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Ask about shipping, returns, or anything...
+            </Typography>
+          </Box>
+        </Box>
+        {onToggleDocManager && (
+          <IconButton onClick={onToggleDocManager} size="small">
+            <DescriptionIcon />
+          </IconButton>
+        )}
       </Box>
 
       <Box
